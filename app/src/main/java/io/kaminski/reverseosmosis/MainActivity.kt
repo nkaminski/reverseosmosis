@@ -1,13 +1,12 @@
 package io.kaminski.reverseosmosis
 import android.Manifest
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -34,13 +33,16 @@ import io.kaminski.reverseosmosis.ui.theme.*
 class MainActivity : ComponentActivity() {
 
     private lateinit var bleManager: WaterDispenserBleManager
+    private lateinit var dataStoreManager: DataStoreManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         bleManager = WaterDispenserBleManager(this)
+        dataStoreManager = DataStoreManager(this)
 
         setContent {
-            ReverseOsmosisApp(bleManager)
+            ReverseOsmosisApp(bleManager, dataStoreManager)
         }
     }
 
@@ -51,7 +53,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun ReverseOsmosisApp(bleManager: WaterDispenserBleManager) {
+fun ReverseOsmosisApp(bleManager: WaterDispenserBleManager, dataStoreManager: DataStoreManager) {
     val connectionState by bleManager.connectionState.collectAsState()
     val context = LocalContext.current
 
@@ -83,32 +85,35 @@ fun ReverseOsmosisApp(bleManager: WaterDispenserBleManager) {
         color = TerminalBlack
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "> REVERSE_OSMOSIS_SYS_V1.0",
+                text = "> REVERSE OSMOSIS V1.0",
                 fontFamily = FontFamily.Monospace,
-                color = PhosphorGreen,
+                color = RetroAquaBlue,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold
             )
 
             if (!hasPermissions) {
                 Text(
-                    text = ">> ERROR: PERMISSIONS_DENIED\n>> SYSTEM_HALTED",
+                    text = ">> ERROR: PERMISSIONS DENIED",
                     color = AlertRed,
                     fontFamily = FontFamily.Monospace
                 )
             } else if (connectionState == WaterDispenserBleManager.ConnectionState.Connected) {
                 ControlPanel(bleManager)
             } else {
-                ScanPanel(bleManager, connectionState)
+                ScanPanel(bleManager, dataStoreManager, connectionState)
             }
 
             Text(
                 text = "STATUS: ${connectionState.name.uppercase()}",
-                color = if (connectionState == WaterDispenserBleManager.ConnectionState.Error) AlertRed else PhosphorGreen,
+                color = if (connectionState == WaterDispenserBleManager.ConnectionState.Error) AlertRed else RetroAquaBlue,
                 fontFamily = FontFamily.Monospace
             )
         }
@@ -117,8 +122,20 @@ fun ReverseOsmosisApp(bleManager: WaterDispenserBleManager) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScanPanel(bleManager: WaterDispenserBleManager, connectionState: WaterDispenserBleManager.ConnectionState) {
+fun ScanPanel(
+    bleManager: WaterDispenserBleManager,
+    dataStoreManager: DataStoreManager,
+    connectionState: WaterDispenserBleManager.ConnectionState
+) {
+    val lastMacAddress by dataStoreManager.lastMacAddress.collectAsState(initial = null)
     var macInput by remember { mutableStateOf("") }
+
+    // Update input when last saved MAC is loaded
+    LaunchedEffect(lastMacAddress) {
+        if (macInput.isEmpty() && lastMacAddress != null) {
+            macInput = lastMacAddress!!
+        }
+    }
 
     // Regex for MAC Address (XX:XX:XX:XX:XX:XX)
     val macRegex = "^([0-9A-Fa-f]{2}[:]){5}([0-9A-Fa-f]{2})$".toRegex()
@@ -132,8 +149,8 @@ fun ScanPanel(bleManager: WaterDispenserBleManager, connectionState: WaterDispen
             .padding(top = 40.dp)
     ) {
         Text(
-            text = ">> ENTER_DEVICE_ADDRESS:",
-            color = PhosphorGreen,
+            text = ">> ENTER DEVICE ADDRESS:",
+            color = RetroAquaBlue,
             fontFamily = FontFamily.Monospace,
             modifier = Modifier
                 .align(Alignment.Start)
@@ -145,7 +162,7 @@ fun ScanPanel(bleManager: WaterDispenserBleManager, connectionState: WaterDispen
             onValueChange = { if (it.length <= 17) macInput = it.uppercase() },
             modifier = Modifier.fillMaxWidth(),
             textStyle = TextStyle(
-                color = PhosphorGreen,
+                color = RetroAquaBlue,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
@@ -154,22 +171,22 @@ fun ScanPanel(bleManager: WaterDispenserBleManager, connectionState: WaterDispen
             placeholder = {
                 Text(
                     "AA:BB:CC:DD:EE:FF",
-                    color = TerminalDimGreen,
+                    color = TerminalDimAqua,
                     fontFamily = FontFamily.Monospace
                 )
             },
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = PhosphorGreen,
-                unfocusedBorderColor = TerminalDimGreen,
-                cursorColor = PhosphorGreen,
-                focusedTextColor = PhosphorGreen,
-                unfocusedTextColor = PhosphorGreen,
+                focusedBorderColor = RetroAquaBlue,
+                unfocusedBorderColor = TerminalDimAqua,
+                cursorColor = RetroAquaBlue,
+                focusedTextColor = RetroAquaBlue,
+                unfocusedTextColor = RetroAquaBlue,
                 focusedContainerColor = TerminalBlack,
                 unfocusedContainerColor = TerminalBlack
             ),
             keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.Characters,
-                autoCorrect = false,
+                autoCorrectEnabled = false,
                 keyboardType = KeyboardType.Ascii,
                 imeAction = ImeAction.Done
             )
@@ -181,22 +198,22 @@ fun ScanPanel(bleManager: WaterDispenserBleManager, connectionState: WaterDispen
             onClick = { if (isValid) bleManager.connect(macInput) },
             enabled = isValid && connectionState != WaterDispenserBleManager.ConnectionState.Connecting,
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (isValid) TerminalDimGreen else DisabledGray,
+                containerColor = if (isValid) TerminalDimAqua else DisabledGray,
                 disabledContainerColor = DisabledGray
             ),
             shape = RectangleShape,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(60.dp)
-                .border(1.dp, if (isValid) PhosphorGreen else DisabledGray, RectangleShape)
+                .border(1.dp, if (isValid) RetroAquaBlue else DisabledGray, RectangleShape)
         ) {
             if (connectionState == WaterDispenserBleManager.ConnectionState.Connecting) {
-                CircularProgressIndicator(color = PhosphorGreen, modifier = Modifier.size(24.dp))
+                CircularProgressIndicator(color = RetroAquaBlue, modifier = Modifier.size(24.dp))
             } else {
                 Text(
-                    text = if (isValid) ">> INITIALIZE_LINK" else ">> INVALID_ADDRESS",
+                    text = if (isValid) ">> INITIALIZE LINK" else ">> INVALID ADDRESS",
                     fontFamily = FontFamily.Monospace,
-                    color = if (isValid) PhosphorGreen else Color.Gray,
+                    color = if (isValid) RetroAquaBlue else Color.Gray,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -224,21 +241,21 @@ fun ControlPanel(bleManager: WaterDispenserBleManager) {
         ConsoleButton(
             label = "[ H O T ]",
             textColor = AlertRed,
-            onPress = { bleManager.pressHot() },
+            onPress = { bleManager.pressButton(WaterDispenserBleManager.DispenserCommand.HOT) },
             onRelease = { bleManager.releaseButton() }
         )
 
         ConsoleButton(
             label = "[ A M B I E N T ]",
-            textColor = PhosphorGreen,
-            onPress = { bleManager.pressAmbient() },
+            textColor = RetroAquaBlue,
+            onPress = { bleManager.pressButton(WaterDispenserBleManager.DispenserCommand.AMBIENT) },
             onRelease = { bleManager.releaseButton() }
         )
 
         ConsoleButton(
             label = "[ C O L D ]",
             textColor = CoolCyan,
-            onPress = { bleManager.pressCold() },
+            onPress = { bleManager.pressButton(WaterDispenserBleManager.DispenserCommand.COLD) },
             onRelease = { bleManager.releaseButton() }
         )
 
@@ -246,11 +263,12 @@ fun ControlPanel(bleManager: WaterDispenserBleManager) {
 
         Button(
             onClick = { bleManager.disconnect() },
-            colors = ButtonDefaults.buttonColors(containerColor = TerminalDimGreen),
+            enabled = bleManager.isDispenserSafe(),
+            colors = ButtonDefaults.buttonColors(containerColor = TerminalDimAqua),
             shape = RectangleShape,
-            modifier = Modifier.border(1.dp, PhosphorGreen)
+            modifier = Modifier.border(1.dp, RetroAquaBlue)
         ) {
-            Text(">> TERMINATE_LINK <<", fontFamily = FontFamily.Monospace, color = PhosphorGreen)
+            Text(">> DISCONNECT <<", fontFamily = FontFamily.Monospace, color = RetroAquaBlue)
         }
     }
 }

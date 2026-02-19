@@ -2,9 +2,9 @@ package io.kaminski.reverseosmosis
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.*
@@ -17,9 +17,9 @@ val NUS_RX_UUID: UUID = UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
 @SuppressLint("MissingPermission") // Checked by MainActivity
 class WaterDispenserBleManager(private val context: Context) {
 
-    private val bluetoothAdapter: BluetoothAdapter? =
-        (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-
+    private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
+    private var bluetoothDevice: BluetoothDevice? = null
     private var bluetoothGatt: BluetoothGatt? = null
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
 
@@ -32,81 +32,89 @@ class WaterDispenserBleManager(private val context: Context) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var heartbeatJob: Job? = null
 
-    // Tracks if a button is currently held down
-    private var isUserInteracting = false
+    // Persistent storage of the MAC address
+    private val dataStoreManager = DataStoreManager(context)
+
+    // Event used to trigger the next write after completion
+    private val writeFinishedEvent = MutableSharedFlow<Int>(extraBufferCapacity = 1)
+
+    enum class DispenserCommand(val value: String) {
+        HOT("\$H"),
+        COLD("\$C"),
+        AMBIENT("\$A"),
+        RELEASE("\$R")
+    }
+    
+    private var currentDispenserCommand: DispenserCommand = DispenserCommand.RELEASE
 
     enum class ConnectionState { Disconnected, Connecting, Connected, Error }
 
+    fun isDispenserSafe(): Boolean {
+        return currentDispenserCommand == DispenserCommand.RELEASE
+    }
     fun connect(address: String) {
         // Validate adapter exists
         if (bluetoothAdapter == null) {
-            _connectionState.value = ConnectionState.Error
+            triggerError("Bluetooth adapter is null")
             return
         }
 
         try {
             _connectionState.value = ConnectionState.Connecting
-            val device = bluetoothAdapter.getRemoteDevice(address)
+            bluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
             // Auto-connect false for faster initial connection
-            device.connectGatt(context, false, gattCallback)
+            bluetoothDevice?.connectGatt(context, false, gattCallback)
         } catch (e: IllegalArgumentException) {
-            _connectionState.value = ConnectionState.Error
+            triggerError("Invalid Bluetooth address", e)
         }
     }
 
     fun disconnect() {
         stopHeartbeat()
         bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
         _connectionState.value = ConnectionState.Disconnected
     }
 
-    // --- Command Interface ---
-
-    fun pressHot() = sendCommand("\$H", interacting = true)
-    fun pressCold() = sendCommand("\$C", interacting = true)
-    fun pressAmbient() = sendCommand("\$A", interacting = true)
-
-    fun releaseButton() {
-        isUserInteracting = false
-        // Immediate safety cutoff
-        sendCommand("\$R", interacting = false)
-    }
-
-    // --- Internal Logic ---
-
-    private fun sendCommand(command: String, interacting: Boolean) {
-        if (interacting) isUserInteracting = true
-
-        scope.launch {
-            writeToCharacteristic(command)
+    private fun triggerError(message: String, exception: Throwable? = null) {
+        if (exception != null) {
+            Log.e("WaterDispenserBleManager", message, exception)
+        } else {
+            Log.e("WaterDispenserBleManager", message)
         }
+
+        stopHeartbeat()
+        bluetoothGatt?.disconnect()
+        _connectionState.value = ConnectionState.Error
     }
 
+    // --- Command Interface ---
+    fun pressButton(cmd: DispenserCommand) {
+        currentDispenserCommand = cmd
+    }
+    fun releaseButton() {
+        currentDispenserCommand = DispenserCommand.RELEASE
+    }
+
+    // --- Internal Logic --
     private suspend fun writeToCharacteristic(value: String) {
         val gatt = bluetoothGatt ?: return
         val char = writeCharacteristic ?: return
 
         writeMutex.withLock {
             try {
-                val writeType = if ((char.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) > 0) {
-                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                } else {
-                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                }
-
-                char.value = value.toByteArray(Charsets.UTF_8)
-                char.writeType = writeType
+                @Suppress("DEPRECATION")
+                char.value = value.toByteArray(Charsets.US_ASCII)
+                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
 
                 @Suppress("DEPRECATION")
                 val success = gatt.writeCharacteristic(char)
 
+                Log.i("WaterDispenserBleManager", "Characteristic write triggered: val: $value, success: $success")
                 if (!success) {
-                    _connectionState.value = ConnectionState.Error
+                    triggerError("Failed to initiate characteristic write")
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
-                _connectionState.value = ConnectionState.Error
+                triggerError("Exception during write", e)
             }
         }
     }
@@ -114,11 +122,18 @@ class WaterDispenserBleManager(private val context: Context) {
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
-            while (isActive) {
-                delay(500L)
-                // Only send safety reset if user is NOT pressing a button
-                if (!isUserInteracting && _connectionState.value == ConnectionState.Connected) {
-                    writeToCharacteristic("\$R")
+            // Initial write upon connection
+            writeToCharacteristic(currentDispenserCommand.value)
+
+            // Listen for completion events to schedule the next write
+            writeFinishedEvent.collect { status ->
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    delay(500L) // Wait 500ms after completion to issue another write
+                    if (isActive) {
+                        writeToCharacteristic(currentDispenserCommand.value)
+                    }
+                } else {
+                    triggerError("Characteristic write failed with status $status")
                 }
             }
         }
@@ -128,14 +143,30 @@ class WaterDispenserBleManager(private val context: Context) {
         heartbeatJob?.cancel()
     }
 
+    internal fun Int.toConnectionStateString() = when (this) {
+        BluetoothProfile.STATE_CONNECTED -> "Connected"
+        BluetoothProfile.STATE_CONNECTING -> "Connecting"
+        BluetoothProfile.STATE_DISCONNECTED -> "Disconnected"
+        BluetoothProfile.STATE_DISCONNECTING -> "Disconnecting"
+        else -> "N/A"
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            Log.d("WaterDispenserBleManager", "onConnectionStateChange: status=${status.toConnectionStateString()}, newState=${newState.toConnectionStateString()}")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 bluetoothGatt = gatt
                 gatt.discoverServices()
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                _connectionState.value = ConnectionState.Disconnected
+            }
+            else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                if (_connectionState.value != ConnectionState.Error) {
+                    _connectionState.value = ConnectionState.Disconnected
+                }
                 stopHeartbeat()
+                gatt.close()
+                bluetoothGatt = null
+                writeCharacteristic = null
+                Log.d("WaterDispenserBleManager", "Disconnected from device")
             }
         }
 
@@ -148,13 +179,30 @@ class WaterDispenserBleManager(private val context: Context) {
                         writeCharacteristic = rxChar
                         _connectionState.value = ConnectionState.Connected
                         startHeartbeat()
+                        // Save successfully connected MAC address
+                        scope.launch {
+                            dataStoreManager.saveMacAddress(gatt.device.address)
+                        }
+
                     } else {
-                        _connectionState.value = ConnectionState.Error
+                        triggerError("NUS RX characteristic not found")
                     }
                 } else {
-                    _connectionState.value = ConnectionState.Error
+                    triggerError("NUS service not found")
                 }
+            } else {
+                triggerError("GATT service discovery failed with status $status")
             }
+        }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            Log.d("WaterDispenserBleManager", "onCharacteristicWrite: status=$status, handle=${characteristic.instanceId}")
+            // Signal that write has completed
+            writeFinishedEvent.tryEmit(status)
         }
     }
 }
