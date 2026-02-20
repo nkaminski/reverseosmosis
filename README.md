@@ -40,6 +40,8 @@ with commands sent to the device using the Nordic UART Service (NUS):
 | `$A`    | **Ambient Water** |
 | `$R`    | **Stop/Release**  |
 
+Commands must be repeated every ~15 seconds otherwise the dispenser will timeout and stop automatically.
+
 ## 📱 Installation & Requirements
 * **Android 12+ (API 31+):**
 * **Permissions:** The app requires `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`.
