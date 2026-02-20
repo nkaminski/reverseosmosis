@@ -1,4 +1,5 @@
 package io.kaminski.reverseosmosis
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -33,13 +35,12 @@ import io.kaminski.reverseosmosis.ui.theme.*
 class MainActivity : ComponentActivity() {
 
     private lateinit var bleManager: WaterDispenserBleManager
-    private lateinit var dataStoreManager: DataStoreManager
+    private val dataStoreManager by lazy { DataStoreManager(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        bleManager = WaterDispenserBleManager(this)
-        dataStoreManager = DataStoreManager(this)
+        bleManager = WaterDispenserBleManager(this, dataStoreManager)
 
         setContent {
             ReverseOsmosisApp(bleManager, dataStoreManager)
@@ -91,32 +92,69 @@ fun ReverseOsmosisApp(bleManager: WaterDispenserBleManager, dataStoreManager: Da
                 .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = "> REVERSE OSMOSIS V1.0",
-                fontFamily = FontFamily.Monospace,
-                color = RetroAquaBlue,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Header(connectionState)
 
-            if (!hasPermissions) {
-                Text(
-                    text = ">> ERROR: PERMISSIONS DENIED",
-                    color = AlertRed,
-                    fontFamily = FontFamily.Monospace
-                )
-            } else if (connectionState == WaterDispenserBleManager.ConnectionState.Connected) {
-                ControlPanel(bleManager)
-            } else {
-                ScanPanel(bleManager, dataStoreManager, connectionState)
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                when {
+                    !hasPermissions -> PermissionError()
+                    connectionState == WaterDispenserBleManager.ConnectionState.Connected -> ControlPanel(bleManager)
+                    else -> ScanPanel(bleManager, dataStoreManager, connectionState)
+                }
             }
 
+            Footer(connectionState)
+        }
+    }
+}
+
+@Composable
+private fun Header(connectionState: WaterDispenserBleManager.ConnectionState) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.app_title_version_format, BuildConfig.VERSION_NAME),
+            fontFamily = FontFamily.Monospace,
+            color = RetroAquaBlue,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        if (connectionState != WaterDispenserBleManager.ConnectionState.Connected) {
             Text(
-                text = "STATUS: ${connectionState.name.uppercase()}",
-                color = if (connectionState == WaterDispenserBleManager.ConnectionState.Error) AlertRed else RetroAquaBlue,
-                fontFamily = FontFamily.Monospace
+                text = stringResource(R.string.app_description),
+                color = TerminalDimAqua,
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
             )
         }
+    }
+}
+
+@Composable
+private fun PermissionError() {
+    Text(
+        text = stringResource(R.string.error_permissions_denied),
+        color = AlertRed,
+        fontFamily = FontFamily.Monospace
+    )
+}
+
+@Composable
+private fun Footer(connectionState: WaterDispenserBleManager.ConnectionState) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.status_format, connectionState.name.uppercase()),
+            color = if (connectionState == WaterDispenserBleManager.ConnectionState.Error) AlertRed else RetroAquaBlue,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = stringResource(R.string.credits),
+            color = TerminalDimAqua,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 8.dp, bottom = 8.dp)
+        )
     }
 }
 
@@ -130,26 +168,21 @@ fun ScanPanel(
     val lastMacAddress by dataStoreManager.lastMacAddress.collectAsState(initial = null)
     var macInput by remember { mutableStateOf("") }
 
-    // Update input when last saved MAC is loaded
     LaunchedEffect(lastMacAddress) {
         if (macInput.isEmpty() && lastMacAddress != null) {
             macInput = lastMacAddress!!
         }
     }
 
-    // Regex for MAC Address (XX:XX:XX:XX:XX:XX)
     val macRegex = "^([0-9A-Fa-f]{2}[:]){5}([0-9A-Fa-f]{2})$".toRegex()
     val isValid = macRegex.matches(macInput)
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 40.dp)
+        modifier = Modifier.fillMaxWidth()
     ) {
         Text(
-            text = ">> ENTER DEVICE ADDRESS:",
+            text = stringResource(R.string.enter_device_address),
             color = RetroAquaBlue,
             fontFamily = FontFamily.Monospace,
             modifier = Modifier
@@ -170,7 +203,7 @@ fun ScanPanel(
             singleLine = true,
             placeholder = {
                 Text(
-                    "AA:BB:CC:DD:EE:FF",
+                    stringResource(R.string.mac_address_placeholder),
                     color = TerminalDimAqua,
                     fontFamily = FontFamily.Monospace
                 )
@@ -211,7 +244,7 @@ fun ScanPanel(
                 CircularProgressIndicator(color = RetroAquaBlue, modifier = Modifier.size(24.dp))
             } else {
                 Text(
-                    text = if (isValid) ">> INITIALIZE LINK" else ">> INVALID ADDRESS",
+                    text = if (isValid) stringResource(R.string.connect_button) else stringResource(R.string.invalid_address_button),
                     fontFamily = FontFamily.Monospace,
                     color = if (isValid) RetroAquaBlue else Color.Gray,
                     fontWeight = FontWeight.Bold
@@ -221,7 +254,7 @@ fun ScanPanel(
 
         if (!isValid && macInput.isNotEmpty()) {
             Text(
-                text = "FORMAT: XX:XX:XX:XX:XX:XX",
+                text = stringResource(R.string.mac_address_format_error),
                 color = AlertRed,
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
@@ -239,21 +272,21 @@ fun ControlPanel(bleManager: WaterDispenserBleManager) {
         modifier = Modifier.fillMaxWidth()
     ) {
         ConsoleButton(
-            label = "[ H O T ]",
+            label = stringResource(R.string.label_hot),
             textColor = AlertRed,
             onPress = { bleManager.pressButton(WaterDispenserBleManager.DispenserCommand.HOT) },
             onRelease = { bleManager.releaseButton() }
         )
 
         ConsoleButton(
-            label = "[ A M B I E N T ]",
+            label = stringResource(R.string.label_ambient),
             textColor = RetroAquaBlue,
             onPress = { bleManager.pressButton(WaterDispenserBleManager.DispenserCommand.AMBIENT) },
             onRelease = { bleManager.releaseButton() }
         )
 
         ConsoleButton(
-            label = "[ C O L D ]",
+            label = stringResource(R.string.label_cold),
             textColor = CoolCyan,
             onPress = { bleManager.pressButton(WaterDispenserBleManager.DispenserCommand.COLD) },
             onRelease = { bleManager.releaseButton() }
@@ -268,7 +301,7 @@ fun ControlPanel(bleManager: WaterDispenserBleManager) {
             shape = RectangleShape,
             modifier = Modifier.border(1.dp, RetroAquaBlue)
         ) {
-            Text(">> DISCONNECT <<", fontFamily = FontFamily.Monospace, color = RetroAquaBlue)
+            Text(stringResource(R.string.disconnect_button), fontFamily = FontFamily.Monospace, color = RetroAquaBlue)
         }
     }
 }

@@ -1,3 +1,17 @@
 <resources>
     <string name="app_name">ReverseOsmosis</string>
+    <string name="app_title_version_format">&gt; REVERSE OSMOSIS V%1$s</string>
+    <string name="app_description">Open source control app for Bluetooth enabled Natural Choice ION water dispensers.</string>
+    <string name="error_permissions_denied">&gt;&gt; ERROR: PERMISSIONS DENIED</string>
+    <string name="status_format">STATUS: %1$s</string>
+    <string name="credits">app design and protocol reversing by Nash Kaminski</string>
+    <string name="enter_device_address">&gt;&gt; ENTER DEVICE ADDRESS:</string>
+    <string name="mac_address_placeholder">AA:BB:CC:DD:EE:FF</string>
+    <string name="connect_button">&gt;&gt; CONNECT</string>
+    <string name="invalid_address_button">&gt;&gt; INVALID ADDRESS</string>
+    <string name="mac_address_format_error">FORMAT: XX:XX:XX:XX:XX:XX</string>
+    <string name="label_hot">[ H O T ]</string>
+    <string name="label_ambient">[ A M B I E N T ]</string>
+    <string name="label_cold">[ C O L D ]</string>
+    <string name="disconnect_button">&gt;&gt; DISCONNECT &lt;&lt;</string>
 </resources>

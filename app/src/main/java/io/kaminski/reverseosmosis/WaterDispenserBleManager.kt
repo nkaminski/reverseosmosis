@@ -1,4 +1,5 @@
 package io.kaminski.reverseosmosis
+
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.content.Context
@@ -9,34 +10,43 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.*
 
-// --- NORDIC UART SERVICE (NUS) DEFINITIONS ---
-val NUS_SERVICE_UUID: UUID = UUID.fromString("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
-// RX Characteristic (Phone -> Dispenser) - This is where we WRITE commands
-val NUS_RX_UUID: UUID = UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
+/**
+ * Manages Bluetooth Low Energy communication with the water dispenser.
+ * Implements a periodic heartbeat to ensure the dispenser state remains synchronized.
+ */
+@SuppressLint("MissingPermission")
+class WaterDispenserBleManager(
+    private val context: Context,
+    private val dataStoreManager: DataStoreManager
+) {
 
-@SuppressLint("MissingPermission") // Checked by MainActivity
-class WaterDispenserBleManager(private val context: Context) {
+    companion object {
+        private const val TAG = "WaterDispenserBleManager"
+        private val NUS_SERVICE_UUID: UUID = UUID.fromString("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+        private val NUS_RX_UUID: UUID = UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
+        private const val HEARTBEAT_INTERVAL_MS = 400L
+    }
 
-    private val bluetoothManager: BluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-    private var bluetoothDevice: BluetoothDevice? = null
+    private val bluetoothAdapter: BluetoothAdapter? by lazy {
+        (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+    }
+
     private var bluetoothGatt: BluetoothGatt? = null
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
 
     // State for UI
-    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
     val connectionState = _connectionState.asStateFlow()
 
-    // Safety & Queueing
-    private val writeMutex = Mutex()
+    // Safety & Concurrency
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val writeMutex = Mutex()
     private var heartbeatJob: Job? = null
 
-    // Persistent storage of the MAC address
-    private val dataStoreManager = DataStoreManager(context)
-
-    // Event used to trigger the next write after completion
-    private val writeFinishedEvent = MutableSharedFlow<Int>(extraBufferCapacity = 1)
+    // SharedFlow to signal BLE write completions, driving the heartbeat loop.
+    private val writeFinishedEvent = MutableSharedFlow<Int>(
+        extraBufferCapacity = 1,
+    )
 
     enum class DispenserCommand(val value: String) {
         HOT("\$H"),
@@ -44,74 +54,61 @@ class WaterDispenserBleManager(private val context: Context) {
         AMBIENT("\$A"),
         RELEASE("\$R")
     }
-    
-    private var currentDispenserCommand: DispenserCommand = DispenserCommand.RELEASE
+
+    @Volatile
+    private var currentCommand = DispenserCommand.RELEASE
 
     enum class ConnectionState { Disconnected, Connecting, Connected, Error }
 
-    fun isDispenserSafe(): Boolean {
-        return currentDispenserCommand == DispenserCommand.RELEASE
-    }
+    fun isDispenserSafe(): Boolean = currentCommand == DispenserCommand.RELEASE
+
     fun connect(address: String) {
-        // Validate adapter exists
-        if (bluetoothAdapter == null) {
-            triggerError("Bluetooth adapter is null")
-            return
-        }
+        val adapter = bluetoothAdapter ?: return triggerError("Bluetooth adapter is null")
 
         try {
             _connectionState.value = ConnectionState.Connecting
-            bluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
-            // Auto-connect false for faster initial connection
-            bluetoothDevice?.connectGatt(context, false, gattCallback)
+            val device = adapter.getRemoteDevice(address)
+            Log.i(TAG, "Connecting to $address...")
+            bluetoothGatt = device.connectGatt(context,
+                                            false,
+                                            gattCallback,
+                                            BluetoothDevice.TRANSPORT_LE)
         } catch (e: IllegalArgumentException) {
-            triggerError("Invalid Bluetooth address", e)
+            triggerError("Invalid Bluetooth address: $address", e)
         }
     }
 
     fun disconnect() {
+        Log.d(TAG, "User initiated disconnect")
         stopHeartbeat()
         bluetoothGatt?.disconnect()
-        _connectionState.value = ConnectionState.Disconnected
     }
 
-    private fun triggerError(message: String, exception: Throwable? = null) {
-        if (exception != null) {
-            Log.e("WaterDispenserBleManager", message, exception)
-        } else {
-            Log.e("WaterDispenserBleManager", message)
-        }
-
-        stopHeartbeat()
-        bluetoothGatt?.disconnect()
-        _connectionState.value = ConnectionState.Error
-    }
-
-    // --- Command Interface ---
     fun pressButton(cmd: DispenserCommand) {
-        currentDispenserCommand = cmd
-    }
-    fun releaseButton() {
-        currentDispenserCommand = DispenserCommand.RELEASE
+        currentCommand = cmd
     }
 
-    // --- Internal Logic --
+    fun releaseButton() {
+        currentCommand = DispenserCommand.RELEASE
+    }
+
     private suspend fun writeToCharacteristic(value: String) {
         val gatt = bluetoothGatt ?: return
         val char = writeCharacteristic ?: return
 
         writeMutex.withLock {
             try {
+                Log.d(TAG, "Writing to char handle (${char.instanceId}): $value")
+
                 @Suppress("DEPRECATION")
                 char.value = value.toByteArray(Charsets.US_ASCII)
                 char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-
+                
                 @Suppress("DEPRECATION")
                 val success = gatt.writeCharacteristic(char)
 
-                Log.i("WaterDispenserBleManager", "Characteristic write triggered: val: $value, success: $success")
-                if (!success) {
-                    triggerError("Failed to initiate characteristic write")
+                if (!success){
+                    Log.e(TAG, "GATT write failed to initiate for $value")
                 }
             } catch (e: Exception) {
                 triggerError("Exception during write", e)
@@ -122,18 +119,18 @@ class WaterDispenserBleManager(private val context: Context) {
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
-            // Initial write upon connection
-            writeToCharacteristic(currentDispenserCommand.value)
+            // Initial write to sync state upon connection
+            writeToCharacteristic(currentCommand.value)
 
-            // Listen for completion events to schedule the next write
+            // Heartbeat loop: wait for last write to complete, wait interval, then repeat.
+            // This ensures we always have a command in flight or recently confirmed.
+            // All writes are driven by this loop to avoid GATT congestion / dispenser hangs.
             writeFinishedEvent.collect { status ->
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    delay(500L) // Wait 500ms after completion to issue another write
-                    if (isActive) {
-                        writeToCharacteristic(currentDispenserCommand.value)
-                    }
+                    delay(HEARTBEAT_INTERVAL_MS)
+                    if (isActive) writeToCharacteristic(currentCommand.value)
                 } else {
-                    triggerError("Characteristic write failed with status $status")
+                    triggerError("Write failed with status: $status")
                 }
             }
         }
@@ -141,67 +138,51 @@ class WaterDispenserBleManager(private val context: Context) {
 
     private fun stopHeartbeat() {
         heartbeatJob?.cancel()
+        heartbeatJob = null
     }
 
-    internal fun Int.toConnectionStateString() = when (this) {
-        BluetoothProfile.STATE_CONNECTED -> "Connected"
-        BluetoothProfile.STATE_CONNECTING -> "Connecting"
-        BluetoothProfile.STATE_DISCONNECTED -> "Disconnected"
-        BluetoothProfile.STATE_DISCONNECTING -> "Disconnecting"
-        else -> "N/A"
+    private fun triggerError(message: String, exception: Throwable? = null) {
+        Log.e(TAG, message, exception)
+        stopHeartbeat()
+        bluetoothGatt?.disconnect()
+        _connectionState.value = ConnectionState.Error
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            Log.d("WaterDispenserBleManager", "onConnectionStateChange: status=${status.toConnectionStateString()}, newState=${newState.toConnectionStateString()}")
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                bluetoothGatt = gatt
-                gatt.discoverServices()
-            }
-            else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                if (_connectionState.value != ConnectionState.Error) {
-                    _connectionState.value = ConnectionState.Disconnected
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> gatt.discoverServices()
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    if (_connectionState.value != ConnectionState.Error) {
+                        _connectionState.value = ConnectionState.Disconnected
+                    }
+                    stopHeartbeat()
+                    gatt.close()
+                    bluetoothGatt = null
+                    writeCharacteristic = null
+                    Log.i(TAG, "Disconnected from device")
                 }
-                stopHeartbeat()
-                gatt.close()
-                bluetoothGatt = null
-                writeCharacteristic = null
-                Log.d("WaterDispenserBleManager", "Disconnected from device")
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 val service = gatt.getService(NUS_SERVICE_UUID)
-                if (service != null) {
-                    val rxChar = service.getCharacteristic(NUS_RX_UUID)
-                    if (rxChar != null) {
-                        writeCharacteristic = rxChar
-                        _connectionState.value = ConnectionState.Connected
-                        startHeartbeat()
-                        // Save successfully connected MAC address
-                        scope.launch {
-                            dataStoreManager.saveMacAddress(gatt.device.address)
-                        }
-
-                    } else {
-                        triggerError("NUS RX characteristic not found")
-                    }
+                val rxChar = service?.getCharacteristic(NUS_RX_UUID)
+                if (rxChar != null) {
+                    writeCharacteristic = rxChar
+                    _connectionState.value = ConnectionState.Connected
+                    startHeartbeat()
+                    scope.launch { dataStoreManager.saveMacAddress(gatt.device.address) }
                 } else {
-                    triggerError("NUS service not found")
+                    triggerError("NUS RX characteristic not found")
                 }
             } else {
                 triggerError("GATT service discovery failed with status $status")
             }
         }
 
-        override fun onCharacteristicWrite(
-            gatt: BluetoothGatt,
-            characteristic: BluetoothGattCharacteristic,
-            status: Int
-        ) {
-            Log.d("WaterDispenserBleManager", "onCharacteristicWrite: status=$status, handle=${characteristic.instanceId}")
-            // Signal that write has completed
+        override fun onCharacteristicWrite(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, status: Int) {
             writeFinishedEvent.tryEmit(status)
         }
     }
