@@ -8,11 +8,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,32 +37,25 @@ import io.kaminski.reverseosmosis.ui.theme.*
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var bleManager: WaterDispenserBleManager
-    private val dataStoreManager by lazy { DataStoreManager(this) }
+    private val viewModel: WaterDispenserViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        bleManager = WaterDispenserBleManager(this, dataStoreManager)
 
         setContent {
-            ReverseOsmosisApp(bleManager, dataStoreManager)
+            ReverseOsmosisApp(viewModel.bleManager, viewModel.dataStoreManager)
         }
     }
 
-    override fun onPause() {
-        bleManager.releaseButton()
-        super.onPause()
-    }
-
     override fun onStop() {
-        bleManager.releaseButton()
+        viewModel.bleManager.releaseButton()
         super.onStop()
     }
 
     override fun onDestroy() {
+        viewModel.bleManager.releaseButton()
         super.onDestroy()
-        bleManager.disconnect()
     }
 }
 
@@ -189,7 +185,9 @@ fun ScanPanel(
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
     ) {
         Text(
             text = stringResource(R.string.enter_device_address),
@@ -279,7 +277,10 @@ fun ControlPanel(bleManager: WaterDispenserBleManager) {
     Column(
         verticalArrangement = Arrangement.spacedBy(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 16.dp)
     ) {
         ConsoleButton(
             label = stringResource(R.string.label_hot),
@@ -302,7 +303,7 @@ fun ControlPanel(bleManager: WaterDispenserBleManager) {
             onRelease = { bleManager.releaseButton() }
         )
 
-        Spacer(modifier = Modifier.height(40.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         Button(
             onClick = { bleManager.disconnect() },
@@ -335,7 +336,7 @@ fun ConsoleButton(
         interactionSource = interactionSource,
         modifier = Modifier
             .fillMaxWidth()
-            .height(80.dp)
+            .height(60.dp)
             .border(2.dp, textColor, RectangleShape),
         colors = ButtonDefaults.buttonColors(containerColor = TerminalBlack),
         shape = RectangleShape
