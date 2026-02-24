@@ -47,6 +47,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onPause() {
+        bleManager.releaseButton()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        bleManager.releaseButton()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         bleManager.disconnect()
