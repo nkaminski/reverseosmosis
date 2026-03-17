@@ -5,6 +5,9 @@ on:
     branches: [main]
     tags: ['v*']
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,14 +30,12 @@ jobs:
         env:
           KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-apk
-          path: app/build/outputs/apk/release/*.apk
-
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release create ${{ github.ref_name }} app/build/outputs/apk/release/*.apk --generate-notes
+        run: |
+          gh release create ${{ github.ref_name }} \
+            app/build/outputs/apk/release/app-release.apk \
+            --title "Release ${{ github.ref_name }}" \
+            --generate-notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
