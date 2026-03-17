@@ -11,15 +11,25 @@ android {
         applicationId = "io.kaminski.reverseosmosis"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.1"
+        versionCode = 2
+        versionName = project.findProperty("versionName")?.toString() ?: "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.keystore")
+            storePassword = System.getenv("KEY_STORE_PASSWORD")
+            keyAlias = "release"
+            keyPassword = System.getenv("KEY_STORE_PASSWORD")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

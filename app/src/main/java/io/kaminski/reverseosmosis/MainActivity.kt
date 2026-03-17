@@ -336,7 +336,7 @@ fun ConsoleButton(
         interactionSource = interactionSource,
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp)
+            .height(80.dp)
             .border(2.dp, textColor, RectangleShape),
         colors = ButtonDefaults.buttonColors(containerColor = TerminalBlack),
         shape = RectangleShape
