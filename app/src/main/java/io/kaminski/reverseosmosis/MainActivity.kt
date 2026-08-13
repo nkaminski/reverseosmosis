@@ -10,8 +10,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -325,10 +330,37 @@ fun ConsoleButton(
     onRelease: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
+    val interactions = remember { mutableStateListOf<Interaction>() }
 
-    LaunchedEffect(isPressed) {
-        if (isPressed) onPress() else onRelease()
+    LaunchedEffect(interactionSource) {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> {
+                    interactions.add(interaction)
+                }
+                is PressInteraction.Release -> {
+                    interactions.remove(interaction.press)
+                }
+                is PressInteraction.Cancel -> {
+                    interactions.remove(interaction.press)
+                }
+                is DragInteraction.Start -> {
+                    interactions.add(interaction)
+                }
+                is DragInteraction.Stop -> {
+                    interactions.remove(interaction.start)
+                }
+                is DragInteraction.Cancel -> {
+                    interactions.remove(interaction.start)
+                }
+            }
+        }
+    }
+
+    val isPressedOrDragged = interactions.isNotEmpty()
+
+    LaunchedEffect(isPressedOrDragged) {
+        if (isPressedOrDragged) onPress() else onRelease()
     }
 
     Button(
@@ -337,7 +369,17 @@ fun ConsoleButton(
         modifier = Modifier
             .fillMaxWidth()
             .height(80.dp)
-            .border(2.dp, textColor, RectangleShape),
+            .border(2.dp, textColor, RectangleShape)
+            .draggable(
+                state = rememberDraggableState { },
+                orientation = Orientation.Vertical,
+                interactionSource = interactionSource
+            )
+            .draggable(
+                state = rememberDraggableState { },
+                orientation = Orientation.Horizontal,
+                interactionSource = interactionSource
+            ),
         colors = ButtonDefaults.buttonColors(containerColor = TerminalBlack),
         shape = RectangleShape
     ) {

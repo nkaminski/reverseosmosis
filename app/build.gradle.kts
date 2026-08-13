@@ -11,8 +11,8 @@ android {
         applicationId = "io.kaminski.reverseosmosis"
         minSdk = 31
         targetSdk = 36
-        versionCode = 2
-        versionName = project.findProperty("versionName")?.toString() ?: "1.2"
+        versionCode = 3
+        versionName = project.findProperty("versionName")?.toString() ?: "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
